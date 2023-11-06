@@ -1,0 +1,150 @@
+# 导入必要的库
+import time  # 导入时间库
+import matplotlib.pyplot as plt  # 导入绘图库
+import numpy as np  # 导入数值计算库
+from scipy.interpolate import make_interp_spline as spline  # 导入样条插值函数
+from scipy.optimize import minimize  # 导入最小化函数
+
+# 定义PID控制器类
+class PID:
+    def __init__(self, P=0.2, I=0.0, D=0.0):
+        # 初始化PID控制器的参数
+        self.kp = P  # 比例参数
+        self.ki = I  # 积分参数
+        self.kd = D  # 微分参数
+        self.uPrevious = 0  # 前一控制量
+        self.uCurent = 0  # 当前控制量
+        self.setValue = 0  # 设定值
+        self.lastErr = 0  # 上一误差
+        self.preLastErr = 0  # 前一次的上一误差
+        self.errSum = 0  # 误差积分
+        self.errSumLimit = 10  # 误差积分限制
+
+    # 位置式PID控制函数
+    def pidPosition(self, curValue):
+        # 计算PID控制器的输出
+        err = self.setValue - curValue  # 计算当前误差
+        dErr = err - self.lastErr  # 计算误差变化率
+        self.preLastErr = self.lastErr  # 更新前一次的上一误差
+        self.lastErr = err  # 更新上一误差
+        self.errSum += err  # 更新误差积分
+        outPID = self.kp * err + (self.ki * self.errSum) + (self.kd * dErr)  # 计算PID控制器输出
+        return outPID
+
+# 定义复杂非线性系统类
+class ComplexNonlinearSystem:
+    def __init__(self, initial_temperature=25):
+        # 初始化复杂非线性系统的温度
+        self.temperature = initial_temperature
+
+    # 更新温度函数
+    def update_temperature(self, voltage):
+        # 通过电压更新温度
+        self.temperature = self.temperature + 0.8 * voltage
+        return self.temperature
+
+# 定义被控对象类
+class BeControlled:
+    def __init__(self, initial_temperature=25):
+        # 初始化被控对象的相关参数
+        self.lastControlIn = 0  # 上一次的控制输入
+        self.preLastControlIn = 0  # 前一次的上一次的控制输入
+        self.lastControlOut = initial_temperature  # 上一次的控制输出
+        self.preLastControlOut = initial_temperature  # 前一次的上一次的控制输出
+        self.complexNonlinearSystem = ComplexNonlinearSystem(initial_temperature)  # 初始化复杂非线性系统
+
+    # 被控对象处理函数
+    def beControlledDeal(self, outPID):
+        # 控制被控对象并返回输出
+        output = self.complexNonlinearSystem.update_temperature(outPID)  # 更新复杂非线性系统的温度
+        self.preLastControlIn = self.lastControlIn  # 更新前一次的上一次的控制输入
+        self.lastControlIn = outPID  # 更新上一次的控制输入
+        self.preLastControlOut = self.lastControlOut  # 更新前一次的上一次的控制输出
+        self.lastControlOut = output  # 更新上一次的控制输出
+        return output
+
+# 定义目标函数
+def objective_function(params):
+    # 定义用于优化的目标函数
+    P, I, D = params  # 提取参数
+    pid = PID(P, I, D)  # 初始化PID控制器
+    beControlled = BeControlled()  # 初始化被控对象
+    pid.setValue = 1  # 设置设定值
+    curValue = 0  # 初始化当前值
+    for i in range(1, 500):  # 循环进行控制
+        outPID = pid.pidPosition(curValue)  # 获取PID控制器输出
+        curValue = beControlled.beControlledDeal(outPID)  # 更新被控对象的值
+    final_error = abs(pid.setValue - curValue)  # 这里使用最终的误差作为目标函数
+    return final_error
+
+# 定义用于测试PID控制的函数
+def testPid(P=0.2, I=0.0, D=0.0, Len=1000):
+    # 初始化PID控制器和被控对象
+    pid = PID(P, I, D)  # 初始化PID控制器对象
+    beControlled = BeControlled()  # 初始化被控对象对象
+    pid.setValue = 1  # 设置设定值为1
+    curValue = 0  # 当前值初始化为0
+    # 初始化用于存储数据的列表
+    curValueList = []  # 用于存储当前值的列表
+    timeList = []  # 用于存储时间的列表
+    setValueList = []  # 用于存储设定值的列表
+    PIDoutList = []  # 用于存储PID输出的列表
+    curValueList.append(0)  # 将初始值加入当前值列表
+    timeList.append(0)  # 将初始时间加入时间列表
+    setValueList.append(pid.setValue)  # 将设定值加入设定值列表
+    PIDoutList.append(0)  # 将初始PID输出加入PID输出列表
+
+    # 循环进行PID控制计算
+    for i in range(1, Len):  # 循环Len次，进行控制计算
+        outPID = pid.pidPosition(curValue)  # 调用位置式PID计算当前控制器输出
+        PIDoutList.append(outPID)  # 将PID输出加入列表
+        curValue = beControlled.beControlledDeal(outPID)  # 调用被控对象处理函数，更新当前值
+        curValueList.append(curValue)  # 将当前值加入列表
+        setValueList.append(pid.setValue)  # 将设定值加入列表
+        timeList.append(i)  # 将时间加入列表
+
+    # 进行数据平滑和绘图
+    timeSm = np.array(timeList)  # 转换时间列表为NumPy数组
+    timeSmooth = np.linspace(timeSm.min(), timeSm.max(), 300)  # 在最小时间和最大时间之间生成300个等间隔的数值
+    curValueSmooth = spline(timeList, curValueList)(timeSmooth)  # 对当前值列表进行样条插值，使其平滑
+    pidoutSmooth = spline(timeList, PIDoutList)(timeSmooth)  # 对PID输出列表进行样条插值，使其平滑
+
+    # 绘制图像
+    plt.figure(0)  # 创建图像窗口
+    plt.plot(timeSmooth, curValueSmooth, label='Temperature', linewidth=2)  # 绘制平滑后的当前值曲线
+    plt.plot(timeSmooth, pidoutSmooth, label='PID Output', linewidth=2)  # 绘制平滑后的PID输出曲线
+    plt.plot(timeList, setValueList, label='Set Value', linewidth=2)  # 绘制设定值曲线
+    plt.xlabel('time (s)')  # 设置x轴标签
+    plt.ylabel('Value')  # 设置y轴标签
+    plt.title('PID Control of Nonlinear System')  # 设置图像标题
+    plt.ylim((1 - 0.5, 1 + 0.5))  # 设置y轴范围
+    plt.grid(True)  # 显示网格
+    plt.legend()  # 显示图例
+    plt.show()  # 显示图像
+
+
+# 优化PID参数
+initial_guess = [0.3, 0.3, 0.1]  # 初始猜测的PID参数
+result = minimize(objective_function, initial_guess, method='SLSQP', bounds=[(0, None), (0, None), (0, None)])  # 使用SLSQP方法对目标函数进行最小化
+best_params = result.x  # 获取得到的最佳PID参数
+print(f'Best PID parameters: P={best_params[0]}, I={best_params[1]}, D={best_params[2]}')  # 打印最佳PID参数
+
+# 定义测试多个PID参数的函数
+def test_multiple_pids(params_list, Len=5000):
+    plt.figure(figsize=(10, 6))  # 创建图像窗口
+    for i, params in enumerate(params_list):  # 循环遍历参数列表
+        pid = PID(params[0], params[1], params[2])  # 使用参数列表中的参数初始化PID控制器
+        testPid(P=pid.kp, I=pid.ki, D=pid.kd, Len=Len)  # 调用测试PID函数
+    plt.legend([f'PID {i+1}' for i in range(len(params_list))])  # 添加图例
+    plt.show()  # 显示图像
+
+# 使用多个不同的参数组合进行控制
+if __name__ == "__main__":
+    params_list = [
+        [0.2, 0.1, 0.1],  # 初始猜测的PID参数
+        [0.1, 0.2, 0.3],  # 其他的PID参数组合
+        [0.3, 0.2, 0.1],
+        [0.15, 0.3, 0.2],
+    ]  # 定义多个不同的PID参数组合
+    test_multiple_pids(params_list, Len=5000)  # 调用函数进行多个PID参数的测试
+
